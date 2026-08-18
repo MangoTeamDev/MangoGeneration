@@ -5,6 +5,7 @@ target/
 # C-мозг (артефакты)
 brain/brain
 brain/brain.exe
+brain/vendor/** linguist-vendored
 
 # Go движок (артефакты)
 engine/*.so
