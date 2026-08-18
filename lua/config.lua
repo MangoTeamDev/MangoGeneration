@@ -2,6 +2,9 @@
 -- Пользовательские правила для автоматизации задач
 -- Встраивается в Rust через mlua
 
+-- Домашняя директория (HOME на Linux/macOS, USERPROFILE на Windows)
+local home = os.getenv("HOME") or os.getenv("USERPROFILE") or "."
+
 -- ============================================
 -- НАСТРОЙКИ ПРИЛОЖЕНИЯ
 -- ============================================
@@ -9,12 +12,15 @@
 Config = {
     -- Имя пользователя
     user_name = "User",
+
+    -- Тема оформления: "system", "dark" или "light"
+    theme = "system",
     
     -- Папки по умолчанию
     paths = {
-        downloads = os.getenv("HOME") .. "/Downloads",
-        pictures  = os.getenv("HOME") .. "/Pictures",
-        documents = os.getenv("HOME") .. "/Documents",
+        downloads = home .. "/Downloads",
+        pictures  = home .. "/Pictures",
+        documents = home .. "/Documents",
     },
     
     -- Интервал автоматической смены обоев (в секундах)

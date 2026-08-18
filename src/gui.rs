@@ -19,6 +19,34 @@ pub struct MangoApp {
     dropped_files: Vec<PathBuf>,
     progress: f32,
     is_busy: bool,
+    last_wallpaper: Option<String>,
+    theme: Theme,
+}
+
+/// Тема оформления интерфейса
+#[derive(PartialEq, Clone, Copy)]
+enum Theme {
+    System,
+    Dark,
+    Light,
+}
+
+impl Theme {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Theme::System => "system",
+            Theme::Dark => "dark",
+            Theme::Light => "light",
+        }
+    }
+
+    fn from_str(s: &str) -> Theme {
+        match s {
+            "dark" => Theme::Dark,
+            "light" => Theme::Light,
+            _ => Theme::System,
+        }
+    }
 }
 
 #[derive(PartialEq)]
@@ -60,6 +88,8 @@ impl Default for MangoApp {
             dropped_files: Vec::new(),
             progress: 0.0,
             is_busy: false,
+            last_wallpaper: None,
+            theme: Theme::System,
         }
     }
 }
@@ -83,6 +113,14 @@ impl MangoApp {
 
         let mut app = Self::default();
         app.lua_loaded = lua_loaded;
+
+        // Считываем начальную тему из config.lua (если Lua загрузился)
+        if lua_loaded {
+            if let Ok(theme_str) = lua_bridge::get_theme() {
+                app.theme = Theme::from_str(&theme_str);
+            }
+        }
+
         app
     }
 
@@ -97,10 +135,24 @@ impl MangoApp {
             self.status = format!("Загружено файлов: {}", self.dropped_files.len());
         }
     }
+
+    /// Применяет выбранную тему оформления к интерфейсу
+    fn apply_theme(&self, ctx: &egui::Context) {
+        let visuals = match self.theme {
+            Theme::Dark => egui::Visuals::dark(),
+            Theme::Light => egui::Visuals::light(),
+            Theme::System => match ctx.system_theme() {
+                Some(egui::Theme::Dark) => egui::Visuals::dark(),
+                _ => egui::Visuals::light(),
+            },
+        };
+        ctx.set_visuals(visuals);
+    }
 }
 
 impl eframe::App for MangoApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.apply_theme(ctx);
         self.handle_dropped_files(ctx);
 
         egui::SidePanel::left("navigation").resizable(false).show(ctx, |ui| {
@@ -173,12 +225,13 @@ impl MangoApp {
                 WallpaperType::Dark => "dark",
             };
 
-            match crate::engine_bridge::run_python_generate(
+            match crate::engine_bridge::run_brain_generate(
                 wallpaper_type,
                 &self.wallpaper_output,
             ) {
                 Ok(path) => {
                     self.status = format!("Сохранено: {}", path);
+                    self.last_wallpaper = Some(path);
                     self.progress = 1.0;
                 }
                 Err(e) => {
@@ -187,6 +240,61 @@ impl MangoApp {
                 }
             }
             self.is_busy = false;
+        }
+
+        // Кнопка: генерация по правилам времени суток из Lua
+        let lua_btn = ui.button("По времени суток (правила из Lua)");
+        if lua_btn.clicked() && !self.is_busy {
+            match lua_bridge::get_wallpaper_for_now() {
+                Ok(settings) => {
+                    self.is_busy = true;
+                    self.status = "Генерация по Lua-правилам...".to_string();
+
+                    let output = format!("wallpaper_{}.png", settings.wallpaper_type);
+                    let result = crate::engine_bridge::run_brain_generate(
+                        &settings.wallpaper_type,
+                        &output,
+                    );
+
+                    match result {
+                        Ok(path) => {
+                            self.status = format!("Сохранено (Lua): {}", path);
+                            self.last_wallpaper = Some(path);
+                            self.progress = 1.0;
+                        }
+                        Err(e) => {
+                            self.status = format!("Ошибка: {}", e);
+                            error!("Ошибка генерации по Lua: {}", e);
+                        }
+                    }
+                    self.is_busy = false;
+                }
+                Err(e) => {
+                    self.status = format!("Ошибка Lua: {}", e);
+                    error!("Ошибка Lua: {}", e);
+                }
+            }
+        }
+
+        // Кнопка: установить последний сгенерированный файл как обои
+        if let Some(path) = &self.last_wallpaper {
+            ui.add_space(4.0);
+            let set_btn = ui.button("Установить как обои рабочего стола");
+            if set_btn.clicked() && !self.is_busy {
+                self.is_busy = true;
+                self.status = "Установка обоев...".to_string();
+
+                match crate::engine_bridge::set_desktop_wallpaper(path) {
+                    Ok(()) => {
+                        self.status = format!("Обои установлены: {}", path);
+                    }
+                    Err(e) => {
+                        self.status = format!("Ошибка установки обоев: {}", e);
+                        error!("Ошибка установки обоев: {}", e);
+                    }
+                }
+                self.is_busy = false;
+            }
         }
 
         ui.add_space(16.0);
@@ -244,7 +352,7 @@ impl MangoApp {
             self.is_busy = true;
             self.status = "Анализ...".to_string();
 
-            match crate::engine_bridge::run_python_analyze(&self.sort_folder) {
+            match crate::engine_bridge::run_brain_analyze(&self.sort_folder) {
                 Ok(results) => {
                     self.analysis_results = results;
                     self.status = format!("Найдено файлов: {}", self.analysis_results.len());
@@ -327,8 +435,8 @@ impl MangoApp {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut format, String::from("PNG"), "PNG");
             ui.selectable_value(&mut format, String::from("JPEG"), "JPEG");
-            ui.selectable_value(&mut format, String::from("WEBP"), "WEBP");
             ui.selectable_value(&mut format, String::from("BMP"), "BMP");
+            ui.selectable_value(&mut format, String::from("TGA"), "TGA");
         });
 
         if !self.dropped_files.is_empty() {
@@ -345,7 +453,7 @@ impl MangoApp {
                     let output = file.parent().unwrap_or(&PathBuf::from("."))
                         .join(format!("{}.{}", stem, format.to_lowercase()));
 
-                    match crate::engine_bridge::run_python_convert(
+                    match crate::engine_bridge::run_brain_convert(
                         &file.display().to_string(),
                         &output.display().to_string(),
                         &format,
@@ -365,11 +473,43 @@ impl MangoApp {
         ui.heading("Настройки");
         ui.separator();
 
+        ui.label("Тема оформления:");
+        let mut theme_changed = false;
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_value(&mut self.theme, Theme::System, "Системная")
+                .changed()
+            {
+                theme_changed = true;
+            }
+            if ui
+                .selectable_value(&mut self.theme, Theme::Dark, "Тёмная")
+                .changed()
+            {
+                theme_changed = true;
+            }
+            if ui
+                .selectable_value(&mut self.theme, Theme::Light, "Светлая")
+                .changed()
+            {
+                theme_changed = true;
+            }
+        });
+        if theme_changed {
+            if let Err(e) = lua_bridge::save_theme(self.theme.as_str()) {
+                error!("Ошибка сохранения темы: {}", e);
+            }
+        }
+
+        ui.add_space(12.0);
         ui.label("Lua-конфигурация:");
         if self.lua_loaded {
             ui.colored_label(egui::Color32::from_rgb(100, 200, 100), "Загружена");
         } else {
             ui.colored_label(egui::Color32::from_rgb(200, 100, 100), "Не загружена");
+        }
+        if let Some(cfg) = crate::paths::config_file() {
+            ui.label(format!("Файл: {}", cfg.display()));
         }
 
         ui.add_space(8.0);
@@ -390,7 +530,7 @@ impl MangoApp {
         ui.add_space(16.0);
         ui.separator();
         ui.label("MangoGeneration v0.1.0");
-        ui.label("Rust + Go + Python + Lua");
+        ui.label("Rust + Go + C + Lua");
         ui.label("FOSS | Локально | Безопасно");
     }
 }

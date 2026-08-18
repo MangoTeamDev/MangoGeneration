@@ -1,33 +1,32 @@
-// engine_bridge.rs — Мост между Rust и внешними компонентами (Go, Python)
-// Управляет вызовами внешних процессов и библиотек
+// engine_bridge.rs — Мост между Rust и внешними компонентами (C-мозг, Go-движок)
+// Вызывает собранный brain (C) как локальный процесс и Go-библиотеку через FFI.
 
+use crate::paths;
 use log::{error, info};
 use std::ffi::{CStr, CString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::gui::FileAnalysis;
 
-/// Вызывает Python brain.py для генерации обоев
-pub fn run_python_generate(wallpaper_type: &str, output: &str) -> Result<String, String> {
+/// Вызывает C-мозг (brain) для генерации обоев
+pub fn run_brain_generate(wallpaper_type: &str, output: &str) -> Result<String, String> {
     info!("Запуск генерации: type={}, output={}", wallpaper_type, output);
 
-    let python = find_python()?;
-    let brain_path = find_brain_py()?;
+    let brain = find_brain_bin()?;
 
-    let result = Command::new(&python)
-        .arg(&brain_path)
+    let result = Command::new(&brain)
         .arg("generate")
         .arg("--type")
         .arg(wallpaper_type)
         .arg("--output")
         .arg(output)
         .output()
-        .map_err(|e| format!("Ошибка запуска Python: {}", e))?;
+        .map_err(|e| format!("Ошибка запуска brain: {}", e))?;
 
     if !result.status.success() {
         let stderr = String::from_utf8_lossy(&result.stderr);
-        return Err(format!("Python ошибка: {}", stderr));
+        return Err(format!("brain ошибка: {}", stderr));
     }
 
     let stdout = String::from_utf8_lossy(&result.stdout);
@@ -38,23 +37,21 @@ pub fn run_python_generate(wallpaper_type: &str, output: &str) -> Result<String,
     Ok(path)
 }
 
-/// Вызывает Python brain.py для анализа директории
-pub fn run_python_analyze(dirpath: &str) -> Result<Vec<FileAnalysis>, String> {
+/// Вызывает C-мозг (brain) для анализа директории
+pub fn run_brain_analyze(dirpath: &str) -> Result<Vec<FileAnalysis>, String> {
     info!("Запуск анализа: {}", dirpath);
 
-    let python = find_python()?;
-    let brain_path = find_brain_py()?;
+    let brain = find_brain_bin()?;
 
-    let output = Command::new(&python)
-        .arg(&brain_path)
+    let output = Command::new(&brain)
         .arg("analyze")
         .arg(dirpath)
         .output()
-        .map_err(|e| format!("Ошибка запуска Python: {}", e))?;
+        .map_err(|e| format!("Ошибка запуска brain: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Python ошибка: {}", stderr));
+        return Err(format!("brain ошибка: {}", stderr));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -76,26 +73,24 @@ pub fn run_python_analyze(dirpath: &str) -> Result<Vec<FileAnalysis>, String> {
     Ok(results)
 }
 
-/// Вызывает Python brain.py для конвертации изображения
-pub fn run_python_convert(input: &str, output: &str, format: &str) -> Result<String, String> {
+/// Вызывает C-мозг (brain) для конвертации изображения
+pub fn run_brain_convert(input: &str, output: &str, format: &str) -> Result<String, String> {
     info!("Конвертация: {} -> {} ({})", input, output, format);
 
-    let python = find_python()?;
-    let brain_path = find_brain_py()?;
+    let brain = find_brain_bin()?;
 
-    let out = Command::new(&python)
-        .arg(&brain_path)
+    let out = Command::new(&brain)
         .arg("convert")
         .arg(input)
         .arg(output)
         .arg("--format")
         .arg(format)
         .output()
-        .map_err(|e| format!("Ошибка запуска Python: {}", e))?;
+        .map_err(|e| format!("Ошибка запуска brain: {}", e))?;
 
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("Python ошибка: {}", stderr));
+        return Err(format!("brain ошибка: {}", stderr));
     }
 
     Ok(output.to_string())
@@ -150,6 +145,33 @@ fn build_copy_tasks(results: &[FileAnalysis], dest_dir: &str) -> String {
     tasks
 }
 
+/// Имя исполняемого файла C-мозга для текущей платформы
+fn brain_bin_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "brain.exe"
+    } else {
+        "brain"
+    }
+}
+
+/// Ищет собранный C-мозг (brain) в известных местах
+fn find_brain_bin() -> Result<String, String> {
+    let name = brain_bin_name();
+    let candidates = [
+        format!("brain/{}", name),
+        format!("../brain/{}", name),
+        format!("../../brain/{}", name),
+        name.to_string(),
+    ];
+
+    let rel: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+    if let Some(p) = paths::find_resource(&rel) {
+        return Ok(p.display().to_string());
+    }
+
+    Err("brain (C) не найден. Соберите его: make -C brain".to_string())
+}
+
 /// Имя файла Go-библиотеки для текущей платформы
 fn engine_library_name() -> &'static str {
     if cfg!(target_os = "windows") {
@@ -169,14 +191,8 @@ fn find_engine_library() -> Option<std::path::PathBuf> {
         name.to_string(),
     ];
 
-    for path in &candidates {
-        let p = Path::new(path);
-        if p.exists() {
-            return Some(p.to_path_buf());
-        }
-    }
-
-    None
+    let rel: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+    paths::find_resource(&rel)
 }
 
 /// Вызывает Go-библиотеку через FFI (libloading)
@@ -257,40 +273,121 @@ fn go_get_file_info(path: &str) -> Option<i64> {
     }
 }
 
-/// Ищем интерпретатор Python
-fn find_python() -> Result<String, String> {
-    // Сначала пробуем Python из виртуального окружения проекта
-    let venv_python = if cfg!(target_os = "windows") {
-        ".venv/Scripts/python.exe"
-    } else {
-        ".venv/bin/python3"
-    };
+/// Устанавливает изображение в качестве обоев рабочего стола
+pub fn set_desktop_wallpaper(path: &str) -> Result<(), String> {
+    info!("Установка обоев: {}", path);
 
-    if Path::new(venv_python).exists() {
-        return Ok(venv_python.to_string());
-    }
+    #[cfg(target_os = "linux")]
+    {
+        let abs = std::path::absolute(Path::new(path))
+            .unwrap_or_else(|_| PathBuf::from(path));
+        let uri = format!("file://{}", abs.display());
 
-    for name in &["python3", "python"] {
-        if which::which(name).is_ok() {
-            return Ok(name.to_string());
+        // GNOME: gsettings
+        if which::which("gsettings").is_ok() {
+            let ok = Command::new("gsettings")
+                .args([
+                    "set",
+                    "org.gnome.desktop.background",
+                    "picture-uri",
+                    &uri,
+                ])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok {
+                return Ok(());
+            }
         }
+
+        // XFCE: xfconf-query
+        if which::which("xfconf-query").is_ok() {
+            let ok = Command::new("xfconf-query")
+                .args([
+                    "-c", "xfce4-desktop",
+                    "-p", "/backdrop/screen0/monitor0/workspace0/last-image",
+                    "-s", abs.to_str().unwrap_or(path),
+                ])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok {
+                return Ok(());
+            }
+        }
+
+        // Универсальные инструменты
+        for tool in ["feh", "nitrogen", "hsetroot"] {
+            if which::which(tool).is_ok() {
+                let ok = Command::new(tool)
+                    .arg("--bg-fill")
+                    .arg(path)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if ok {
+                    return Ok(());
+                }
+            }
+        }
+
+        return Err(
+            "Не удалось установить обои: не найден поддерживаемый инструмент (gsettings, feh, nitrogen, hsetroot)"
+                .to_string(),
+        );
     }
-    Err("Python не найден. Установите Python 3.14+".to_string())
+
+    #[cfg(target_os = "windows")]
+    {
+        set_windows_wallpaper(path)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        Err("Установка обоев поддерживается только на Linux и Windows".to_string())
+    }
 }
 
-/// Ищем скрипт brain.py
-fn find_brain_py() -> Result<String, String> {
-    let candidates = [
-        "brain/brain.py",
-        "../brain/brain.py",
-        "../../brain/brain.py",
-    ];
+/// Устанавливает обои на Windows через SystemParametersInfoW (user32.dll)
+#[cfg(target_os = "windows")]
+fn set_windows_wallpaper(path: &str) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::raw::c_void;
 
-    for path in &candidates {
-        if Path::new(path).exists() {
-            return Ok(path.to_string());
-        }
+    // WinAPI константы
+    const SPI_SETDESKWALLPAPER: u32 = 0x0014;
+    const SPIF_UPDATEINIFILE: u32 = 0x0001;
+
+    // Кодируем путь в UTF-16 для SystemParametersInfoW
+    let wide: Vec<u16> = std::ffi::OsStr::new(path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let user32 = unsafe {
+        libloading::Library::new("user32.dll")
+            .map_err(|e| format!("Не удалось загрузить user32.dll: {}", e))?
+    };
+
+    let spi: libloading::Symbol<unsafe extern "system" fn(u32, u32, *mut c_void, u32) -> i32> =
+        unsafe {
+            user32
+                .get(b"SystemParametersInfoW")
+                .map_err(|e| format!("SystemParametersInfoW не найдена: {}", e))?
+        };
+
+    let ok = unsafe {
+        spi(
+            SPI_SETDESKWALLPAPER,
+            0,
+            wide.as_ptr() as *mut c_void,
+            SPIF_UPDATEINIFILE,
+        )
+    };
+
+    if ok != 0 {
+        Ok(())
+    } else {
+        Err("SystemParametersInfoW вернул ошибку".to_string())
     }
-
-    Err("brain.py не найден. Убедитесь, что он находится в папке brain/".to_string())
 }

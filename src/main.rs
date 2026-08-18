@@ -4,6 +4,7 @@
 mod gui;
 mod engine_bridge;
 mod lua_bridge;
+mod paths;
 
 use log::info;
 

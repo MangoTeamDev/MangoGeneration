@@ -1,36 +1,20 @@
-# === RUST ===
+# Сборка (Rust)
 /target/
-**/*.rs.bk
-cargo-lock.json # (удалите эту строку, если это финальное приложение, а не библиотека)
+target/
 
-# === GO ===
-/bin/
-/out/
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-*.test
-*.prof
+# C-мозг (артефакты)
+brain/brain
+brain/brain.exe
 
-# === PYTHON ===
-__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.venv/
-venv/
-ENV/
-env/
+# Go движок (артефакты)
+engine/*.so
+engine/*.dll
+engine/*.h
 
-# === LUA ===
-*.luac
-luarocks_modules/
-.lua_cache/
-
-# === Системные файлы и IDE ===
+# OS
 .DS_Store
 Thumbs.db
-.vscode/
-.idea/
+
+# Результаты работы приложения
+wallpaper*.png
+pattern.png

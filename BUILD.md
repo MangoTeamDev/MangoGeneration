@@ -1,52 +1,49 @@
 # Сборка MangoGeneration
 
+Кроссплатформенный локальный «генератор и преобразователь всего»:
+обои для рабочего стола, умная уборка файлов, конвертация медиа.
+
+Технологии: **Rust** (GUI + оркестрация), **Go** (высокоскоростной движок, c-shared),
+**C** (мозг: генерация, анализ, конвертация изображений), **Lua 5.4** (правила).
+
 ## Зависимости
 
-### Rust (основное приложение)
-```bash
-# Установите Rust через rustup
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-### Go (высокоскоростной движок)
-```bash
-# Установите Go 1.26+
-# https://go.dev/doc/install
-go version  # должна быть 1.26+
-```
-
-### Python (мозг и ИИ)
-```bash
-# Установите Python 3.14+
-python3 --version  # должна быть 3.14+
-
-# Установите зависимости
-pip install -r brain/requirements.txt
-```
-
-### Lua (конфигурация)
-Lua 5.4 вендорится через mlua автоматически — ничего устанавливать не нужно.
-
----
+| Компонент | Что нужно | Проверка |
+|-----------|-----------|----------|
+| Rust | 1.97+ (`rustup`) | `rustc --version` |
+| Go | 1.26+ | `go version` |
+| C-компилятор | GCC/Clang + make | `cc --version` |
+| Lua | 5.4 (вендорится через mlua) | ничего ставить не нужно |
 
 ## Сборка
 
-### 1. Сборка Go-библиотеки (опционально, для максимальной скорости)
+### 1. C-мозг (brain)
+
+```bash
+cd brain
+make            # Linux: brain/brain
+
+# Windows (кросс-сборка, нужен mingw-w64)
+#   sudo apt install gcc-mingw-w64-x86-64
+make windows    # Windows: brain/brain.exe
+```
+
+### 2. Go-движок (опционально, для максимальной скорости копирования)
 
 ```bash
 cd engine
-chmod +x build.sh
 
 # Linux
-./build.sh linux amd64
+go build -buildmode=c-shared -o libengine.so engine.go
 
-# Windows (кросс-компиляция)
-./build.sh windows amd64
+# Windows (из Linux, кросс-компиляция)
+GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -o engine.dll engine.go
 ```
 
-Результат: `engine/libengine.so` (Linux) или `engine/engine.dll` (Windows).
+Если библиотека отсутствует, приложение автоматически переключается на
+встроенный Rust-fallback для копирования файлов.
 
-### 2. Сборка Rust-приложения
+### 3. Rust-приложение
 
 ```bash
 # Из корня проекта
@@ -55,70 +52,83 @@ cargo build --release
 
 Результат: `target/release/mangogeneration`
 
-### 3. Запуск
+### 4. Запуск
 
 ```bash
-# Запуск из корня проекта (нужен доступ к brain/ и lua/)
 cargo run --release
 ```
 
----
+Приложение само находит `brain/` и `engine/` — как из корня проекта, так и при
+запуске собранного бинарника из любой папки.
 
-## Кросс-компиляция
+### Конфигурация и темы
 
-### Linux → Windows
+При первом запуске рядом с бинарником создаётся папка `mango/` и в неё
+копируется `config.lua` (шаблон из `lua/config.lua`). Все настройки читаются
+именно оттуда:
+
+```
+<папка_бинарника>/mango/config.lua
+```
+
+Пользователь может править этот файл (правила сортировки, обои по времени
+суток, тема). Тема оформления (Системная / Тёмная / Светлая) выбирается во
+вкладке «Настройки» и сохраняется в `Config.theme` этого файла.
+
+## Кросс-компиляция под Windows
 
 ```bash
-# Установите целевой компонент
+# Установите целевой компонент и MinGW-w64 (для линковки)
 rustup target add x86_64-pc-windows-gnu
+sudo apt install gcc-mingw-w64-x86-64
 
-# Соберите
+# C-мозг
+cd brain && make windows && cd ..
+
+# Go-библиотека
+cd engine
+GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -o engine.dll engine.go
+cd ..
+
+# Rust-приложение
 cargo build --release --target x86_64-pc-windows-gnu
 ```
 
-### Windows → Linux
-
-```bash
-rustup target add x86_64-unknown-linux-gnu
-cargo build --release --target x86_64-unknown-linux-gnu
-```
-
----
+Результат: `target/x86_64-pc-windows-gnu/release/mangogeneration.exe`
+(рядом положите `engine.dll` и `brain/brain.exe`).
 
 ## Структура проекта
 
 ```
 mangogeneration/
-├── Cargo.toml              # Rust workspace
-├── BUILD.md                # Этот файл
+├── Cargo.toml              # Rust-проект (eframe/egui + mlua + libloading)
 ├── src/
 │   ├── main.rs             # Точка входа
-│   ├── gui.rs              # GUI (egui)
-│   ├── engine_bridge.rs    # Мост к Go и Python
-│   └── lua_bridge.rs       # Мост к Lua
-├── engine/
-│   ├── engine.go           # Go-библиотека (C-shared)
-│   ├── go.mod
-│   └── build.sh            # Скрипт сборки Go
+│   ├── gui.rs              # GUI (egui), Drag-and-Drop
+│   ├── engine_bridge.rs    # Мост к Go (FFI) и C (процессы), установка обоев
+│   ├── lua_bridge.rs       # Встраивание Lua 5.4 (mlua)
+│   └── paths.rs            # Поиск ресурсов относительно бинарника/корня
 ├── brain/
-│   ├── brain.py            # Python: генерация, анализ, конвертация
-│   └── requirements.txt
+│   ├── brain.c             # C-мозг: генерация, анализ, конвертация
+│   ├── vendor/             # stb_image.h, stb_image_write.h (public domain)
+│   └── Makefile            # make / make windows
+├── engine/
+│   ├── engine.go           # Go: параллельное копирование (c-shared)
+│   └── go.mod
 └── lua/
-    └── config.lua          # Пользовательские правила
+    └── config.lua          # Пользовательские правила (сортировка, обои по времени суток)
 ```
-
----
 
 ## Архитектура
 
 | Компонент | Язык | Роль |
 |-----------|------|------|
-| **Интерфейс** | Rust (egui) | GUI, Drag-and-Drop, системные действия |
-| **Движок** | Go (c-shared) | Параллельное копирование файлов, скачивание |
-| **Мозг** | Python (Pillow) | Генерация обоев, анализ, конвертация |
-| **Конфигурация** | Lua 5.4 | Правила сортировки, автоматизация |
+| **Интерфейс** | Rust (egui) | GUI, Drag-and-Drop, установка обоев |
+| **Движок** | Go (c-shared) | Параллельное копирование файлов |
+| **Мозг** | C (stb) | Генерация обоев, анализ, конвертация |
+| **Конфигурация** | Lua 5.4 | Правила сортировки, обои по времени суток |
 
 Взаимодействие:
-- Rust → Go: FFI через `libloading` или CLI-вызов
-- Rust → Python: вызов `brain.py` через процесс
+- Rust → Go: FFI через `libloading` (без сокетов)
+- Rust → C: вызов `brain` как локального процесса
 - Rust → Lua: встраивание через `mlua`
