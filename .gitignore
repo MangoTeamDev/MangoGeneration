@@ -1,0 +1,36 @@
+# === RUST ===
+/target/
+**/*.rs.bk
+cargo-lock.json # (удалите эту строку, если это финальное приложение, а не библиотека)
+
+# === GO ===
+/bin/
+/out/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.prof
+
+# === PYTHON ===
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+ENV/
+env/
+
+# === LUA ===
+*.luac
+luarocks_modules/
+.lua_cache/
+
+# === Системные файлы и IDE ===
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

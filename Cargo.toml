@@ -1,0 +1,48 @@
+[package]
+name = "mangogeneration"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+description = "Кроссплатформенный локальный генератор и преобразователь файлов"
+authors = ["MangoGeneration Contributors"]
+license = "MIT"
+
+[[bin]]
+name = "mangogeneration"
+path = "src/main.rs"
+
+[dependencies]
+# GUI
+eframe = "0.31"
+egui = "0.31"
+egui_extras = { version = "0.31", features = ["image"] }
+
+# Lua встраивание
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+
+# Системные вызовы и пути
+dirs = "6"
+which = "8"
+
+# Сериализация
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Диалоги выбора файлов
+rfd = "0.15"
+
+# Динамическая загрузка Go-библиотеки (FFI)
+libloading = "0.8"
+
+# Логирование
+log = "0.4"
+env_logger = "0.11"
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
