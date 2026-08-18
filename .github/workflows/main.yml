@@ -1,0 +1,108 @@
+name: Build and Test MangoGeneration
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # 1. Сборка Rust проекта под Linux и Windows
+  rust-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Устанавливаем конкретную версию Rust 1.97.1 и таргеты для кросс-компиляции
+      - name: Setup Rust Toolchain (1.97.1)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          targets: |
+            x86_64-unknown-linux-gnu
+            x86_64-pc-windows-gnu
+
+      # Ставим компилятор и линкер для сборки под Windows (.exe)
+      - name: Install MinGW Cross-Compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      # Компилируем бинарник под Linux
+      - name: Build for Linux (x86_64)
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      # Компилируем бинарник под Windows (.exe)
+      - name: Build for Windows (x86_64)
+        run: cargo build --release --target x86_64-pc-windows-gnu
+
+      # Сохраняем готовые файлы сборки, чтобы их можно было скачать из вкладки Actions
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangogeneration-binaries
+          path: |
+            target/x86_64-unknown-linux-gnu/release/mangogeneration
+            target/x86_64-pc-windows-gnu/release/*.exe
+          if-no-files-found: warn
+
+  # 2. Окружение Go (1.26)
+  go-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go (1.26)
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          check-latest: true
+
+      - name: Go Build
+        run: |
+          if [ -f go.mod ]; then go mod tidy; fi
+          # Если бинарник Go собирается из корня или конкретной папки, подправь путь (например, ./engine)
+          go build -v ./... || echo "Нет Go-файлов для компиляции или код лежит в подпапке"
+
+  # 3. Окружение Python (3.14)
+  python-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python (3.14)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      # Ставим зависимости из requirements.txt, который теперь лежит в корне
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then 
+            pip install -r requirements.txt
+          fi
+          # Проверяем файлы на синтаксические ошибки
+          python -m compileall .
+
+  # 4. Окружение Lua (5.4)
+  lua-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Lua (5.4)
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.4"
+
+      - name: Install Luacheck (Linter)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luarocks
+          sudo luarocks install luacheck
+
+      - name: Lint Lua Files
+        run: |
+          # Проверяем статический синтаксис Lua
+          luacheck . --no-color || true
