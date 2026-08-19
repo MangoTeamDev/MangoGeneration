@@ -465,7 +465,7 @@ impl MangoApp {
             ui.selectable_value(&mut format, String::from("TGA"), "TGA");
         });
         if format != self.convert_format {
-            self.convert_format = format;
+            self.convert_format = format.clone();
         }
 
         if !self.dropped_files.is_empty() {
