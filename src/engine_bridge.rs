@@ -65,12 +65,71 @@ pub fn run_brain_analyze(dirpath: &str) -> Result<Vec<FileAnalysis>, String> {
             path: item["path"].as_str().unwrap_or("").to_string(),
             extension: item["extension"].as_str().unwrap_or("").to_string(),
             size: item["size_human"].as_str().unwrap_or("?").to_string(),
+            size_bytes: item["size_bytes"].as_u64().unwrap_or(0),
             category: item["category"].as_str().unwrap_or("Other").to_string(),
             target_folder: item["suggested_folder"].as_str().unwrap_or("Other").to_string(),
         })
         .collect();
 
     Ok(results)
+}
+
+/// Вызывает C-мозг (brain) для генерации QR-кода
+pub fn run_brain_qrcode(text: &str, output: &str, size: i32) -> Result<String, String> {
+    info!("Генерация QR-кода: text_len={}, output={}", text.len(), output);
+
+    let brain = find_brain_bin()?;
+
+    let result = Command::new(&brain)
+        .arg("qrcode")
+        .arg("--text")
+        .arg(text)
+        .arg("--output")
+        .arg(output)
+        .arg("--size")
+        .arg(size.to_string())
+        .output()
+        .map_err(|e| format!("Ошибка запуска brain: {}", e))?;
+
+    if !result.status.success() {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        return Err(format!("brain ошибка: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| format!("Ошибка парсинга ответа: {}", e))?;
+
+    Ok(json["path"].as_str().unwrap_or(output).to_string())
+}
+
+/// Вызывает C-мозг (brain) для генерации аватарки из имени
+pub fn run_brain_avatar(name: &str, output: &str, size: i32) -> Result<String, String> {
+    info!("Генерация аватарки: name={}, output={}", name, output);
+
+    let brain = find_brain_bin()?;
+
+    let result = Command::new(&brain)
+        .arg("avatar")
+        .arg("--name")
+        .arg(name)
+        .arg("--output")
+        .arg(output)
+        .arg("--size")
+        .arg(size.to_string())
+        .output()
+        .map_err(|e| format!("Ошибка запуска brain: {}", e))?;
+
+    if !result.status.success() {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        return Err(format!("brain ошибка: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| format!("Ошибка парсинга ответа: {}", e))?;
+
+    Ok(json["path"].as_str().unwrap_or(output).to_string())
 }
 
 /// Вызывает C-мозг (brain) для конвертации изображения
@@ -96,6 +155,21 @@ pub fn run_brain_convert(input: &str, output: &str, format: &str) -> Result<Stri
     Ok(output.to_string())
 }
 
+/// Определяет целевую папку файла: сначала правила Lua, затем категория из анализа.
+/// Так распределяются ВСЕ файлы, включая файлы без расширения.
+pub(crate) fn target_folder_for(item: &FileAnalysis) -> String {
+    let lua_info = crate::lua_bridge::LuaFileInfo {
+        name: item.name.clone(),
+        extension: item.extension.clone(),
+        size_bytes: item.size_bytes,
+    };
+
+    match crate::lua_bridge::apply_sort_rule(&lua_info) {
+        Ok(Some(folder)) => folder,
+        _ => item.target_folder.clone(),
+    }
+}
+
 /// Использует Go-библиотеку для быстрого копирования файлов
 pub fn batch_copy_files(
     source_dir: &str,
@@ -117,7 +191,8 @@ pub fn batch_copy_files(
     // Fallback: копируем через стандартный Rust
     let mut success_count = 0;
     for item in analysis_results {
-        let dst = format!("{}/{}/{}", dest_dir, item.target_folder, item.name);
+        let folder = target_folder_for(item);
+        let dst = format!("{}/{}/{}", dest_dir, folder, item.name);
         let dst_path = Path::new(&dst);
 
         if let Some(parent) = dst_path.parent() {
@@ -139,7 +214,8 @@ pub fn batch_copy_files(
 fn build_copy_tasks(results: &[FileAnalysis], dest_dir: &str) -> String {
     let mut tasks = String::new();
     for item in results {
-        let dst = format!("{}/{}/{}", dest_dir, item.target_folder, item.name);
+        let folder = target_folder_for(item);
+        let dst = format!("{}/{}/{}", dest_dir, folder, item.name);
         tasks.push_str(&format!("{}|{}\n", item.path, dst));
     }
     tasks

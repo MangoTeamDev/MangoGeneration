@@ -109,8 +109,8 @@ mangogeneration/
 │   ├── lua_bridge.rs       # Встраивание Lua 5.4 (mlua)
 │   └── paths.rs            # Поиск ресурсов относительно бинарника/корня
 ├── brain/
-│   ├── brain.c             # C-мозг: генерация, анализ, конвертация
-│   ├── vendor/             # stb_image.h, stb_image_write.h (public domain)
+│   ├── brain.c             # C-мозг: генерация, анализ, конвертация, QR, аватарки
+│   ├── vendor/             # stb_image.h, stb_image_write.h, qrcodegen.* (MIT)
 │   └── Makefile            # make / make windows
 ├── engine/
 │   ├── engine.go           # Go: параллельное копирование (c-shared)
@@ -125,7 +125,7 @@ mangogeneration/
 |-----------|------|------|
 | **Интерфейс** | Rust (egui) | GUI, Drag-and-Drop, установка обоев |
 | **Движок** | Go (c-shared) | Параллельное копирование файлов |
-| **Мозг** | C (stb) | Генерация обоев, анализ, конвертация |
+| **Мозг** | C (stb + qrcodegen) | Генерация обоев, анализ, конвертация, QR, аватарки |
 | **Конфигурация** | Lua 5.4 | Правила сортировки, обои по времени суток |
 
 Взаимодействие:

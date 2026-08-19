@@ -7,8 +7,8 @@
 CC      ?= cc
 WINCC   ?= x86_64-w64-mingw32-gcc
 
-SRC     := brain.c
-CFLAGS  := -std=c11 -O2 -Wall -Wextra
+SRC     := brain.c vendor/qrcodegen.c
+CFLAGS  := -std=c11 -O2 -Wall -Wextra -Ivendor
 LDLIBS  := -lm
 
 OUT     := brain

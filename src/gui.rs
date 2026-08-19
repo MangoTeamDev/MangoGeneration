@@ -22,6 +22,10 @@ pub struct MangoApp {
     last_wallpaper: Option<String>,
     theme: Theme,
     convert_format: String,
+    qr_text: String,
+    qr_output: String,
+    avatar_name: String,
+    avatar_output: String,
 }
 
 /// Тема оформления интерфейса
@@ -55,6 +59,8 @@ enum Tab {
     Generator,
     Sorter,
     Converter,
+    Qr,
+    Avatar,
     Settings,
 }
 
@@ -72,6 +78,7 @@ pub(crate) struct FileAnalysis {
     pub(crate) path: String,
     pub(crate) extension: String,
     pub(crate) size: String,
+    pub(crate) size_bytes: u64,
     pub(crate) category: String,
     pub(crate) target_folder: String,
 }
@@ -92,6 +99,10 @@ impl Default for MangoApp {
             last_wallpaper: None,
             theme: Theme::System,
             convert_format: String::from("PNG"),
+            qr_text: String::from("https://"),
+            qr_output: String::from("qrcode.png"),
+            avatar_name: String::new(),
+            avatar_output: String::from("avatar.png"),
         }
     }
 }
@@ -193,6 +204,8 @@ impl eframe::App for MangoApp {
                 self.nav_button(ui, Tab::Generator, "Обои");
                 self.nav_button(ui, Tab::Sorter, "Уборка");
                 self.nav_button(ui, Tab::Converter, "Конвертер");
+                self.nav_button(ui, Tab::Qr, "QR-код");
+                self.nav_button(ui, Tab::Avatar, "Аватарки");
                 self.nav_button(ui, Tab::Settings, "Настройки");
 
                 // Статус — прижимаем к правому краю
@@ -213,6 +226,8 @@ impl eframe::App for MangoApp {
                 Tab::Generator => self.render_generator_tab(ui),
                 Tab::Sorter => self.render_sorter_tab(ui),
                 Tab::Converter => self.render_converter_tab(ui),
+                Tab::Qr => self.render_qr_tab(ui),
+                Tab::Avatar => self.render_avatar_tab(ui),
                 Tab::Settings => self.render_settings_tab(ui),
             }
         });
@@ -409,7 +424,7 @@ impl MangoApp {
                         ui.label(&item.name);
                         ui.label(&item.category);
                         ui.label(&item.size);
-                        ui.label(&item.target_folder);
+                        ui.label(crate::engine_bridge::target_folder_for(item));
                         ui.end_row();
                     }
                 });
@@ -505,6 +520,72 @@ impl MangoApp {
                     self.dropped_files.clear();
                 }
             });
+        }
+    }
+
+    fn render_qr_tab(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Генератор QR-кодов");
+        ui.separator();
+
+        ui.label("Текст или ссылка для QR-кода:");
+        ui.text_edit_singleline(&mut self.qr_text);
+
+        ui.add_space(8.0);
+        ui.label("Имя выходного файла:");
+        ui.text_edit_singleline(&mut self.qr_output);
+
+        ui.add_space(12.0);
+        if self.orange_button(ui, "Сгенерировать QR-код").clicked() && !self.is_busy {
+            let text = self.qr_text.trim().to_string();
+            let output = self.qr_output.trim().to_string();
+            if text.is_empty() {
+                self.status = "Введите текст для QR-кода".to_string();
+            } else {
+                self.is_busy = true;
+                self.status = "Генерация QR-кода...".to_string();
+                let out = crate::engine_bridge::run_brain_qrcode(&text, &output, 512);
+                match out {
+                    Ok(path) => self.status = format!("QR-код сохранён: {}", path),
+                    Err(e) => self.status = format!("Ошибка: {}", e),
+                }
+                self.is_busy = false;
+            }
+        }
+
+        if !self.status.is_empty() {
+            ui.add_space(8.0);
+            ui.label(&self.status);
+        }
+    }
+
+    fn render_avatar_tab(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Генератор аватарок");
+        ui.separator();
+
+        ui.label("Имя пользователя (одинаковое имя = одинаковый аватар):");
+        ui.text_edit_singleline(&mut self.avatar_name);
+
+        ui.add_space(8.0);
+        ui.label("Имя выходного файла:");
+        ui.text_edit_singleline(&mut self.avatar_output);
+
+        ui.add_space(12.0);
+        if self.orange_button(ui, "Сгенерировать аватар").clicked() && !self.is_busy {
+            let name = self.avatar_name.trim().to_string();
+            let output = self.avatar_output.trim().to_string();
+            self.is_busy = true;
+            self.status = "Генерация аватарки...".to_string();
+            let out = crate::engine_bridge::run_brain_avatar(&name, &output, 512);
+            match out {
+                Ok(path) => self.status = format!("Аватар сохранён: {}", path),
+                Err(e) => self.status = format!("Ошибка: {}", e),
+            }
+            self.is_busy = false;
+        }
+
+        if !self.status.is_empty() {
+            ui.add_space(8.0);
+            ui.label(&self.status);
         }
     }
 

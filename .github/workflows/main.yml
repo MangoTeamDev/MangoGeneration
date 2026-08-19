@@ -90,6 +90,13 @@ jobs:
           brain/brain generate --type dark --output /tmp/smoke_dark.png
           test -s /tmp/smoke.png && test -s /tmp/smoke_dark.png && echo "C brain OK"
 
+      # 11b. Смоук-тест QR-кода и аватарки
+      - name: Smoke-test C Brain (qrcode + avatar)
+        run: |
+          brain/brain qrcode --text "https://example.com" --output /tmp/smoke_qr.png
+          brain/brain avatar --name "CI Test" --output /tmp/smoke_avatar.png
+          test -s /tmp/smoke_qr.png && test -s /tmp/smoke_avatar.png && echo "QR/avatar OK"
+
       # 12. Собираем итоговые релизные папки
       - name: Assemble release bundles
         run: |

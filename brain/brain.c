@@ -42,6 +42,9 @@
 #include "vendor/stb_image.h"
 #include "vendor/stb_image_write.h"
 
+/* Генератор QR-кодов (Project Nayuki, MIT License) */
+#include "vendor/qrcodegen.h"
+
 /* ============================================================
  *  Динамическая строка (простой буфер для сборки JSON)
  * ============================================================ */
@@ -166,32 +169,52 @@ static unsigned char *make_pattern(int w, int h, int seed) {
     unsigned char *img = (unsigned char *)malloc((size_t)w * h * 3);
     if (!img) return NULL;
 
-    /* Тёмная подложка */
-    for (size_t i = 0; i < (size_t)w * h * 3; i++) img[i] = 12;
+    /* Фон — тёмный градиент из случайных цветов (не чёрный!) */
+    int bg1[3] = {
+        brain_rand_range(12, 60), brain_rand_range(12, 60), brain_rand_range(25, 85)
+    };
+    int bg2[3] = {
+        brain_rand_range(25, 100), brain_rand_range(25, 100), brain_rand_range(40, 130)
+    };
+    for (int y = 0; y < h; y++) {
+        double t = (double)y / (double)h;
+        for (int x = 0; x < w; x++) {
+            size_t i = ((size_t)y * w + x) * 3;
+            img[i + 0] = (unsigned char)(bg1[0] + (int)((bg2[0] - bg1[0]) * t));
+            img[i + 1] = (unsigned char)(bg1[1] + (int)((bg2[1] - bg1[1]) * t));
+            img[i + 2] = (unsigned char)(bg1[2] + (int)((bg2[2] - bg1[2]) * t));
+        }
+    }
 
-    int circles = brain_rand_range(20, 60);
+    /* Яркие круги с сильным наложением и светящейся окантовкой */
+    int circles = brain_rand_range(25, 70);
     for (int c = 0; c < circles; c++) {
-        int cx = brain_rand_range(-100, w + 100);
-        int cy = brain_rand_range(-100, h + 100);
-        int r = brain_rand_range(50, 300);
-        int cr = brain_rand_range(0, 255);
-        int cg = brain_rand_range(0, 255);
-        int cb = brain_rand_range(0, 255);
-        int alpha = brain_rand_range(30, 100);
+        int cx = brain_rand_range(0, w);
+        int cy = brain_rand_range(0, h);
+        int r = brain_rand_range(60, 350);
+        int cr = brain_rand_range(60, 255);
+        int cg = brain_rand_range(60, 255);
+        int cb = brain_rand_range(60, 255);
+        int alpha = brain_rand_range(60, 170);
 
         int x0 = cx - r; if (x0 < 0) x0 = 0;
         int x1 = cx + r; if (x1 > w) x1 = w;
         int y0 = cy - r; if (y0 < 0) y0 = 0;
         int y1 = cy + r; if (y1 > h) y1 = h;
 
+        int edge = (r - 10) * (r - 10);
+        int body = r * r;
         for (int y = y0; y < y1; y++) {
             for (int x = x0; x < x1; x++) {
                 int dx = x - cx, dy = y - cy;
-                if (dx * dx + dy * dy <= r * r) {
+                int d2 = dx * dx + dy * dy;
+                if (d2 <= body) {
                     size_t i = ((size_t)y * w + x) * 3;
-                    img[i + 0] = (unsigned char)((img[i + 0] * (255 - alpha) + cr * alpha) / 255);
-                    img[i + 1] = (unsigned char)((img[i + 1] * (255 - alpha) + cg * alpha) / 255);
-                    img[i + 2] = (unsigned char)((img[i + 2] * (255 - alpha) + cb * alpha) / 255);
+                    int a = alpha;
+                    if (d2 > edge) a = 255; /* яркая окантовка */
+                    img[i + 0] = (unsigned char)((img[i + 0] * (255 - a) + cr * a) / 255);
+                    img[i + 1] = (unsigned char)((img[i + 1] * (255 - a) + cg * a) / 255);
+                    img[i + 2] = (unsigned char)((img[i + 2] * (255 - a) + cb * a) / 255);
                 }
             }
         }
@@ -518,6 +541,164 @@ static int cmd_convert(int argc, char **argv) {
 }
 
 /* ============================================================
+ *  Генерация QR-кодов (qrcodegen, Project Nayuki)
+ * ============================================================ */
+
+static int cmd_qrcode(int argc, char **argv) {
+    const char *text = NULL;
+    const char *output = "qrcode.png";
+    int size = 512;
+
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--text") == 0 && i + 1 < argc) text = argv[++i];
+        else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc) output = argv[++i];
+        else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc) size = atoi(argv[++i]);
+    }
+
+    if (!text || text[0] == '\0') {
+        fprintf(stderr, "brain: укажите --text для QR-кода\n");
+        return 1;
+    }
+
+    uint8_t qrcode[qrcodegen_BUFFER_LEN_MAX];
+    uint8_t temp[qrcodegen_BUFFER_LEN_MAX];
+    if (!qrcodegen_encodeText(text, temp, qrcode, qrcodegen_Ecc_MEDIUM,
+                              qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
+                              qrcodegen_Mask_AUTO, true)) {
+        fprintf(stderr, "brain: текст слишком длинный для QR-кода\n");
+        return 1;
+    }
+
+    int qs = qrcodegen_getSize(qrcode);
+    int scale = size / qs;
+    if (scale < 1) scale = 1;
+    int img_size = qs * scale;
+
+    unsigned char *img = (unsigned char *)malloc((size_t)img_size * img_size * 3);
+    if (!img) return 1;
+    memset(img, 255, (size_t)img_size * img_size * 3); /* белый фон */
+
+    for (int y = 0; y < qs; y++) {
+        for (int x = 0; x < qs; x++) {
+            if (!qrcodegen_getModule(qrcode, x, y)) continue;
+            for (int dy = 0; dy < scale; dy++) {
+                for (int dx = 0; dx < scale; dx++) {
+                    size_t i = (((size_t)y * scale + dy) * img_size + x * scale + dx) * 3;
+                    img[i] = img[i + 1] = img[i + 2] = 0; /* чёрный модуль */
+                }
+            }
+        }
+    }
+
+    if (!stbi_write_png(output, img_size, img_size, 3, img, img_size * 3)) {
+        fprintf(stderr, "brain: не удалось записать %s\n", output);
+        free(img);
+        return 1;
+    }
+    free(img);
+
+    StrBuf sb; sb_init(&sb);
+    sb_append(&sb, "{\"status\":\"ok\",\"path\":");
+    sb_append_json_string(&sb, output);
+    sb_append(&sb, "}\n");
+    printf("%s", sb.data);
+    free(sb.data);
+    return 0;
+}
+
+/* ============================================================
+ *  Генерация аватарок (детерминированный идентикон из имени)
+ * ============================================================ */
+
+/* Хэш ФНВ-1а: одинаковое имя → одинаковый аватар */
+static uint32_t hash_name(const char *s) {
+    uint32_t h = 2166136261u;
+    for (; *s; s++) {
+        h ^= (unsigned char)*s;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static int cmd_avatar(int argc, char **argv) {
+    const char *name = NULL;
+    const char *output = "avatar.png";
+    int size = 512;
+
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--name") == 0 && i + 1 < argc) name = argv[++i];
+        else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc) output = argv[++i];
+        else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc) size = atoi(argv[++i]);
+    }
+
+    if (!name || name[0] == '\0') name = "Mango";
+
+    uint32_t h = hash_name(name);
+
+    /* Цвета из хэша: тёмный фон и яркий передний план */
+    int bg[3] = { (int)(35 + (h & 0x7F)), (int)(35 + ((h >> 8) & 0x7F)), (int)(55 + ((h >> 16) & 0x7F)) };
+    int fg[3] = { (int)(170 + (h & 0x3F)), (int)(150 + ((h >> 8) & 0x3F)), (int)(130 + ((h >> 16) & 0x3F)) };
+
+    /* Симметричный идентикон 5x5, заполняем из хэша */
+    int cells[5][5];
+    uint32_t bits = h ^ (h >> 16);
+    for (int y = 0; y < 5; y++) {
+        for (int x = 0; x < 3; x++) {
+            int on = (int)(bits & 1);
+            cells[y][x] = on;
+            cells[y][4 - x] = on;
+            bits = (bits >> 1) | (bits << 31);
+        }
+    }
+
+    unsigned char *img = (unsigned char *)malloc((size_t)size * size * 3);
+    if (!img) return 1;
+
+    /* Заливаем фон */
+    for (size_t i = 0; i < (size_t)size * size * 3; i += 3) {
+        img[i] = (unsigned char)bg[0];
+        img[i + 1] = (unsigned char)bg[1];
+        img[i + 2] = (unsigned char)bg[2];
+    }
+
+    /* Рисуем ячейки идентикона (с зазором для эффекта сетки) */
+    int cell = size / 5;
+    int gap = cell / 10;
+    for (int y = 0; y < 5; y++) {
+        for (int x = 0; x < 5; x++) {
+            if (!cells[y][x]) continue;
+            int px = x * cell + gap;
+            int py = y * cell + gap;
+            int pw = cell - gap * 2;
+            for (int yy = py; yy < py + pw; yy++) {
+                for (int xx = px; xx < px + pw; xx++) {
+                    if (yy >= size || xx >= size) continue;
+                    size_t i = ((size_t)yy * size + xx) * 3;
+                    img[i] = (unsigned char)fg[0];
+                    img[i + 1] = (unsigned char)fg[1];
+                    img[i + 2] = (unsigned char)fg[2];
+                }
+            }
+        }
+    }
+
+    if (!stbi_write_png(output, size, size, 3, img, size * 3)) {
+        fprintf(stderr, "brain: не удалось записать %s\n", output);
+        free(img);
+        return 1;
+    }
+    free(img);
+
+    StrBuf sb; sb_init(&sb);
+    sb_append(&sb, "{\"status\":\"ok\",\"path\":");
+    sb_append_json_string(&sb, output);
+    sb_append(&sb, "}\n");
+    printf("%s", sb.data);
+    free(sb.data);
+    return 0;
+}
+
+/* ============================================================
  *  Точка входа
  * ============================================================ */
 
@@ -525,6 +706,8 @@ static void usage(void) {
     fprintf(stderr,
         "Использование:\n"
         "  brain generate [--type gradient|pattern|dark] [--width W] [--height H] [--output FILE.png]\n"
+        "  brain qrcode  --text <текст> [--output FILE.png] [--size N]\n"
+        "  brain avatar  --name <имя> [--output FILE.png] [--size N]\n"
         "  brain analyze <путь_к_файлу_или_папке>\n"
         "  brain convert <input> <output> [--format PNG|JPEG|BMP|TGA]\n");
 }
@@ -539,6 +722,10 @@ int main(int argc, char **argv) {
 
     if (strcmp(cmd, "generate") == 0)
         return cmd_generate(argc - 2, argv + 2);
+    if (strcmp(cmd, "qrcode") == 0)
+        return cmd_qrcode(argc - 2, argv + 2);
+    if (strcmp(cmd, "avatar") == 0)
+        return cmd_avatar(argc - 2, argv + 2);
     if (strcmp(cmd, "analyze") == 0)
         return cmd_analyze(argc - 2, argv + 2);
     if (strcmp(cmd, "convert") == 0)
