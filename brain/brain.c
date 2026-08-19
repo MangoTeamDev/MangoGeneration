@@ -331,9 +331,10 @@ static int is_file(const char *path) {
 
 static long long file_size(const char *path) {
 #ifdef _WIN32
-    struct _stat64 st;
-    if (_stat64(path, &st) != 0) return 0;
-    return (long long)st.st_size;
+    /* Win32: GetFileAttributesExA возвращает размер без открытия дескриптора */
+    WIN32_FILE_ATTRIBUTE_DATA fd;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &fd)) return 0;
+    return (long long)fd.nFileSizeLow | ((long long)fd.nFileSizeHigh << 32);
 #else
     struct stat st;
     if (stat(path, &st) != 0) return 0;
