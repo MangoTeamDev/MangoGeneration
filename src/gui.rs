@@ -21,6 +21,7 @@ pub struct MangoApp {
     is_busy: bool,
     last_wallpaper: Option<String>,
     theme: Theme,
+    convert_format: String,
 }
 
 /// Тема оформления интерфейса
@@ -90,6 +91,7 @@ impl Default for MangoApp {
             is_busy: false,
             last_wallpaper: None,
             theme: Theme::System,
+            convert_format: String::from("PNG"),
         }
     }
 }
@@ -138,7 +140,7 @@ impl MangoApp {
 
     /// Применяет выбранную тему оформления к интерфейсу
     fn apply_theme(&self, ctx: &egui::Context) {
-        let visuals = match self.theme {
+        let mut visuals = match self.theme {
             Theme::Dark => egui::Visuals::dark(),
             Theme::Light => egui::Visuals::light(),
             Theme::System => match ctx.system_theme() {
@@ -146,7 +148,33 @@ impl MangoApp {
                 _ => egui::Visuals::light(),
             },
         };
+        // Оранжевый акцент для выделений (радио, selectable)
+        visuals.selection.bg_fill = ORANGE;
+        visuals.selection.stroke = egui::Stroke::new(1.0, ORANGE);
         ctx.set_visuals(visuals);
+    }
+
+    /// Вкладка-кнопка с оранжевой заливкой, когда активна
+    fn nav_button(&mut self, ui: &mut egui::Ui, tab: Tab, label: &str) {
+        let selected = self.active_tab == tab;
+        let mut btn = egui::Button::new(
+            egui::RichText::new(label)
+                .color(if selected { egui::Color32::WHITE } else { egui::Color32::GRAY }),
+        );
+        if selected {
+            btn = btn.fill(ORANGE);
+        }
+        if ui.add(btn).clicked() {
+            self.active_tab = tab;
+        }
+    }
+
+    /// Основная кнопка с оранжевой заливкой
+    fn orange_button(&self, ui: &mut egui::Ui, label: &str) -> egui::Response {
+        ui.add(
+            egui::Button::new(egui::RichText::new(label).color(egui::Color32::WHITE))
+                .fill(ORANGE),
+        )
     }
 }
 
@@ -155,34 +183,29 @@ impl eframe::App for MangoApp {
         self.apply_theme(ctx);
         self.handle_dropped_files(ctx);
 
-        egui::SidePanel::left("navigation").resizable(false).show(ctx, |ui| {
-            ui.heading("Mango");
-            ui.separator();
-            ui.label("Генератор и\nпреобразователь");
-            ui.add_space(16.0);
+        // Верхняя панель: логотип + вкладки (оранжевый акцент) + статус
+        egui::TopBottomPanel::top("navigation").show(ctx, |ui| {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.heading("Mango");
+                ui.add_space(20.0);
 
-            if ui.selectable_label(self.active_tab == Tab::Generator, "Обои").clicked() {
-                self.active_tab = Tab::Generator;
-            }
-            if ui.selectable_label(self.active_tab == Tab::Sorter, "Уборка").clicked() {
-                self.active_tab = Tab::Sorter;
-            }
-            if ui.selectable_label(self.active_tab == Tab::Converter, "Конвертер").clicked() {
-                self.active_tab = Tab::Converter;
-            }
-            if ui.selectable_label(self.active_tab == Tab::Settings, "Настройки").clicked() {
-                self.active_tab = Tab::Settings;
-            }
+                self.nav_button(ui, Tab::Generator, "Обои");
+                self.nav_button(ui, Tab::Sorter, "Уборка");
+                self.nav_button(ui, Tab::Converter, "Конвертер");
+                self.nav_button(ui, Tab::Settings, "Настройки");
 
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                ui.add_space(8.0);
-                let status_color = if self.is_busy {
-                    egui::Color32::from_rgb(255, 200, 0)
-                } else {
-                    egui::Color32::from_rgb(100, 200, 100)
-                };
-                ui.colored_label(status_color, &self.status);
+                // Статус — прижимаем к правому краю
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let status_color = if self.is_busy {
+                        egui::Color32::from_rgb(255, 200, 0)
+                    } else {
+                        ORANGE
+                    };
+                    ui.colored_label(status_color, &self.status);
+                });
             });
+            ui.add_space(4.0);
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -195,6 +218,9 @@ impl eframe::App for MangoApp {
         });
     }
 }
+
+/// Акцентный оранжевый цвет
+pub(crate) const ORANGE: egui::Color32 = egui::Color32::from_rgb(255, 130, 0);
 
 impl MangoApp {
     fn render_generator_tab(&mut self, ui: &mut egui::Ui) {
@@ -214,7 +240,7 @@ impl MangoApp {
 
         ui.add_space(8.0);
 
-        let btn = ui.button("Сгенерировать обои");
+        let btn = self.orange_button(ui, "Сгенерировать обои");
         if btn.clicked() && !self.is_busy {
             self.is_busy = true;
             self.status = "Генерация...".to_string();
@@ -243,7 +269,7 @@ impl MangoApp {
         }
 
         // Кнопка: генерация по правилам времени суток из Lua
-        let lua_btn = ui.button("По времени суток (правила из Lua)");
+        let lua_btn = self.orange_button(ui, "По времени суток (правила из Lua)");
         if lua_btn.clicked() && !self.is_busy {
             match lua_bridge::get_wallpaper_for_now() {
                 Ok(settings) => {
@@ -279,7 +305,7 @@ impl MangoApp {
         // Кнопка: установить последний сгенерированный файл как обои
         if let Some(path) = &self.last_wallpaper {
             ui.add_space(4.0);
-            let set_btn = ui.button("Установить как обои рабочего стола");
+            let set_btn = self.orange_button(ui, "Установить как обои рабочего стола");
             if set_btn.clicked() && !self.is_busy {
                 self.is_busy = true;
                 self.status = "Установка обоев...".to_string();
@@ -308,7 +334,7 @@ impl MangoApp {
         ui.painter().rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(100, 100, 200)),
+            egui::Stroke::new(2.0_f32, ORANGE),
             egui::StrokeKind::Inside,
         );
 
@@ -348,7 +374,7 @@ impl MangoApp {
 
         ui.add_space(8.0);
 
-        if ui.button("Анализировать").clicked() && !self.sort_folder.is_empty() {
+        if self.orange_button(ui, "Анализировать").clicked() && !self.sort_folder.is_empty() {
             self.is_busy = true;
             self.status = "Анализ...".to_string();
 
@@ -431,41 +457,54 @@ impl MangoApp {
 
         ui.add_space(8.0);
         ui.label("Формат вывода:");
-        let mut format = String::from("PNG");
+        let mut format = self.convert_format.clone();
         ui.horizontal(|ui| {
             ui.selectable_value(&mut format, String::from("PNG"), "PNG");
             ui.selectable_value(&mut format, String::from("JPEG"), "JPEG");
             ui.selectable_value(&mut format, String::from("BMP"), "BMP");
             ui.selectable_value(&mut format, String::from("TGA"), "TGA");
         });
+        if format != self.convert_format {
+            self.convert_format = format;
+        }
 
         if !self.dropped_files.is_empty() {
             ui.add_space(8.0);
             ui.label(format!("Файлов к конвертации: {}", self.dropped_files.len()));
-
-            if ui.button("Конвертировать").clicked() && !self.is_busy {
-                self.is_busy = true;
-                self.status = "Конвертация...".to_string();
-                let mut converted = 0;
-
+            egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
                 for file in &self.dropped_files {
-                    let stem = file.file_stem().unwrap_or_default().to_string_lossy();
-                    let output = file.parent().unwrap_or(&PathBuf::from("."))
-                        .join(format!("{}.{}", stem, format.to_lowercase()));
-
-                    match crate::engine_bridge::run_brain_convert(
-                        &file.display().to_string(),
-                        &output.display().to_string(),
-                        &format,
-                    ) {
-                        Ok(_) => converted += 1,
-                        Err(e) => error!("Ошибка конвертации {}: {}", file.display(), e),
-                    }
+                    ui.label(file.display().to_string());
                 }
+            });
 
-                self.status = format!("Конвертировано: {}", converted);
-                self.is_busy = false;
-            }
+            ui.horizontal(|ui| {
+                if self.orange_button(ui, "Конвертировать").clicked() && !self.is_busy {
+                    self.is_busy = true;
+                    self.status = "Конвертация...".to_string();
+                    let mut converted = 0;
+
+                    for file in &self.dropped_files {
+                        let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+                        let output = file.parent().unwrap_or(&PathBuf::from("."))
+                            .join(format!("{}.{}", stem, format.to_lowercase()));
+
+                        match crate::engine_bridge::run_brain_convert(
+                            &file.display().to_string(),
+                            &output.display().to_string(),
+                            &format,
+                        ) {
+                            Ok(_) => converted += 1,
+                            Err(e) => error!("Ошибка конвертации {}: {}", file.display(), e),
+                        }
+                    }
+
+                    self.status = format!("Конвертировано: {}", converted);
+                    self.is_busy = false;
+                }
+                if ui.button("Очистить список").clicked() {
+                    self.dropped_files.clear();
+                }
+            });
         }
     }
 

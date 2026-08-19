@@ -199,6 +199,19 @@ static unsigned char *make_pattern(int w, int h, int seed) {
     return img;
 }
 
+/* Случайный цвет. dark=1 — тёмная гамма, dark=0 — яркая/насыщенная */
+static void random_rgb(int c[3], int dark) {
+    if (dark) {
+        c[0] = brain_rand_range(5, 45);
+        c[1] = brain_rand_range(5, 35);
+        c[2] = brain_rand_range(20, 70);
+    } else {
+        c[0] = brain_rand_range(0, 255);
+        c[1] = brain_rand_range(0, 255);
+        c[2] = brain_rand_range(0, 255);
+    }
+}
+
 static int cmd_generate(int argc, char **argv) {
     const char *type = "gradient";
     const char *output = "wallpaper.png";
@@ -211,16 +224,23 @@ static int cmd_generate(int argc, char **argv) {
         else if (strcmp(argv[i], "--height") == 0 && i + 1 < argc) h = atoi(argv[++i]);
     }
 
+    /* Каждая генерация получает новое зерно — результат всегда разный */
+    rng_state = (uint64_t)time(NULL) ^ (uint64_t)(uintptr_t)output;
+
     unsigned char *img = NULL;
 
     if (strcmp(type, "gradient") == 0) {
-        int c1[3] = {30, 15, 60}, c2[3] = {255, 100, 50};
+        int c1[3], c2[3];
+        random_rgb(c1, 0);
+        random_rgb(c2, 0);
         img = make_gradient(w, h, c1, c2, "vertical");
     } else if (strcmp(type, "dark") == 0) {
-        int c1[3] = {10, 5, 30}, c2[3] = {40, 20, 80};
+        int c1[3], c2[3];
+        random_rgb(c1, 1);
+        random_rgb(c2, 1);
         img = make_gradient(w, h, c1, c2, "diagonal");
     } else if (strcmp(type, "pattern") == 0) {
-        img = make_pattern(w, h, 0);
+        img = make_pattern(w, h, (int)(rng_state >> 8));
     } else {
         fprintf(stderr, "brain: неизвестный тип: %s\n", type);
         return 1;
