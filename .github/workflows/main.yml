@@ -1,4 +1,4 @@
-name: Build and Test MangoGeneration (Rust + C)
+name: Build MangoGeneration (Rust + C + Go)
 
 on:
   push:
@@ -6,14 +6,19 @@ on:
   pull_request:
     branches: [ "main" ]
 
+env:
+  CARGO_TERM_COLOR: always
+  # Go перекрёстная сборка использует mingw-gcc как компилятор C
+  GO_VERSION: "1.26"
+
 jobs:
-  # Единая быстрая сборка компилируемых бинарников (Rust и C)
-  build-and-test:
+  build:
+    name: Build all components (Linux + Windows)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # 1. Устанавливаем тулчейн Rust
+      # 1. Тулчейн Rust с целевыми платформами
       - name: Setup Rust Toolchain (1.97.1)
         uses: dtolnay/rust-toolchain@master
         with:
@@ -22,36 +27,94 @@ jobs:
             x86_64-unknown-linux-gnu
             x86_64-pc-windows-gnu
 
-      # 2. Ставим компиляторы GCC: родной для Linux и кросс-компилятор для Windows (.exe)
-      - name: Install Compilers (GCC & MinGW)
+      # 2. Тулчейн Go (для высокоскоростного движка)
+      - name: Setup Go Toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: engine/go.mod
+
+      # 3. Компиляторы: нативный GCC и кросс-компилятор MinGW-w64 для Windows
+      - name: Install Compilers (GCC & MinGW-w64)
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc gcc-mingw-w64-x86-64 make
 
-      # 3. Собираем Си-мозг (brain) локально под Linux перед сборкой Rust
-      - name: Build C Brain for Linux (x86_64)
-        run: |
-          if [ -f Makefile ]; then
-            make
-          else
-            gcc -Wall -Wextra -O2 -I. -Ivendor brain.c -o brain_bin -lm
-          fi
+      # 4. C-мозг для Linux
+      - name: Build C Brain for Linux
+        working-directory: brain
+        run: make
 
-      # 4. Компилируем основной Rust-проект под Linux
-      - name: Build Rust Engine for Linux (x86_64)
+      # 5. C-мозг для Windows (кросс-сборка)
+      - name: Build C Brain for Windows
+        working-directory: brain
+        run: make windows
+
+      # 6. Go-движок для Linux (c-shared .so)
+      - name: Build Go Engine for Linux
+        working-directory: engine
+        run: go build -buildmode=c-shared -o libengine.so engine.go
+
+      # 7. Go-движок для Windows (c-shared .dll)
+      - name: Build Go Engine for Windows
+        working-directory: engine
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "1"
+          CC: x86_64-w64-mingw32-gcc
+        run: go build -buildmode=c-shared -o engine.dll engine.go
+
+      # 8. Кэш Rust-зависимостей
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      # 9. Основное Rust-приложение для Linux
+      - name: Build Rust App for Linux
         run: cargo build --release --target x86_64-unknown-linux-gnu
 
-      # 5. Компилируем основной Rust-проект под Windows (.exe)
-      - name: Build Rust Engine for Windows (x86_64)
+      # 10. Основное Rust-приложение для Windows (.exe)
+      - name: Build Rust App for Windows
         run: cargo build --release --target x86_64-pc-windows-gnu
 
-      # 6. Собираем и сохраняем готовые артефакты (бинарники Linux и исполняемые файлы Windows)
-      - name: Upload Artifacts
+      # 11. Проверка CLI C-мозга (быстрый смоук-тест генерации на Linux)
+      - name: Smoke-test C Brain (generate)
+        run: |
+          brain/brain generate --type gradient --output /tmp/smoke.png
+          brain/brain generate --type dark --output /tmp/smoke_dark.png
+          test -s /tmp/smoke.png && test -s /tmp/smoke_dark.png && echo "C brain OK"
+
+      # 12. Собираем итоговые релизные папки
+      - name: Assemble release bundles
+        run: |
+          mkdir -p dist/linux/mango dist/windows/mango
+
+          # Linux: бинарник + .so + brain + шаблон конфига
+          cp target/x86_64-unknown-linux-gnu/release/mangogeneration dist/linux/
+          cp engine/libengine.so dist/linux/
+          cp -r brain dist/linux/brain
+          mkdir -p dist/linux/lua
+          cp lua/config.lua dist/linux/lua/config.lua
+
+          # Windows: .exe + .dll + brain.exe + шаблон конфига
+          cp target/x86_64-pc-windows-gnu/release/mangogeneration.exe dist/windows/
+          cp engine/engine.dll dist/windows/
+          cp brain/brain.exe dist/windows/
+          mkdir -p dist/windows/lua
+          cp lua/config.lua dist/windows/lua/config.lua
+
+          ls -R dist
+
+      # 13. Сохраняем артефакты
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mangogeneration-binaries
-          path: |
-            brain_bin
-            target/x86_64-unknown-linux-gnu/release/mangogeneration
-            target/x86_64-pc-windows-gnu/release/*.exe
-          if-no-files-found: warn
+          name: mangogeneration
+          path: dist/
+          if-no-files-found: error
